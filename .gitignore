@@ -6,6 +6,7 @@ systems/iphil/*
 systems/test*
 systems/actigraphy/*
 systems/diabetes/*
+systems/igt1/*
 systems/igt1/data*
 systems/igt1/scored*
 systems/igt1/backup*

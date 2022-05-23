@@ -2,13 +2,14 @@
 """
 Created on Tue Oct  1 13:25:49 2019
 
-@author: 310276324
+@author: <Author>
 """
 
 #on mondays, you fall sleep earlier than on other days
 
 #%%
-
+import random
+random.seed(0) 
 import pandas as pd
 import numpy as np
 import time
@@ -21,7 +22,6 @@ import pandasql
 from scipy.stats import ks_2samp, mannwhitneyu
 import pdb , os, shutil, hashlib, sys
 from config import system_name, reserved_keywords, tense_dict
-
 
 
 def check_if_exist(fil):
@@ -576,7 +576,7 @@ def remove_exclusions(statement_lib_df, exclusion_definition):
             schema_selected = statement_lib_df
         search_space = schema_selected[target_column].tolist()
         matched_rows = filter_list(pattern, search_space)
-        print("removing {}...".format(matched_rows))
+        # print("removing {}...".format(matched_rows))
         for val in matched_rows:
             statement_lib_df = statement_lib_df[statement_lib_df[target_column].astype(str)!=val]
     return statement_lib_df
@@ -639,6 +639,8 @@ if __name__ == "__main__":
         for insight_num,(inter_name, inter_phrase, inter_tense, inter_query) in enumerate(zip(combi_names, combi_phrases, combi_tenses, combin_queries)):
             # if schema_num != 5 or insight_num!=2:
             #     continue
+            if random.randint(0,3) ==20 :
+                continue
             statement_library_dict["schema_num"].append(schema_num)
             statement_library_dict["scoring_type"].append(scoring_type)
             statement_library_dict["insight_num"].append(insight_num)
@@ -662,3 +664,4 @@ if __name__ == "__main__":
     statement_library_df = remove_exclusions(statement_library_df, exclusion_definition=exclusion_definition)
     statement_library_df.to_excel("systems/{}/statement_library_{}.xlsx".format(system_name,system_name), index=False)
     statement_library_df.to_pickle("systems/{}/statement_library_{}.pickle".format(system_name,system_name), protocol=4)
+    print('in total: library has {} insights'.format(len(statement_library_df)))

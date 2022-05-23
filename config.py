@@ -45,8 +45,7 @@ unknown_phrase = """incomparable to""" # if not known, this has to be None
 date_model = [3600, '2019-01-01', '2019-12-31'] # The scope duration of the data collection/ inisght generation (sampling interval, start date, finish date)
 recommendation_count = 10
 verbose = True
-parallel = True
-
+parallel = False
 
 # is a system is apre-defined, the following lines override the last few lines to the predefined values.
 if system_name in pre_defined_systems and "data_file_format" in pre_defined_systems[system_name]:

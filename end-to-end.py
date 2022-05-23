@@ -1,6 +1,10 @@
 import os
+import time
 from config import system_name
 
+from time import time
+
+tic = time()
 system_scope_dict = {'iphil':['user01', 'user02'], 'diabetes':['user01'], 'igt1':['allura01']}
 env_variable = 'scope_{}'.format(system_name)
 print("creating library...")
@@ -27,3 +31,6 @@ for scope in scopes:
     print("picking insight pairs...")
     os.system("python pick_insight_pairs.py") #what to say
     print("done.")
+
+toc = time()
+print('elapsed_time:{}'.format((toc-tic) / 60))

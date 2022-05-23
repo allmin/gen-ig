@@ -107,6 +107,7 @@ if __name__ == '__main__':
         
         
     save_to_system_folder(df=scored_library,prefix='scored_insights_final_with_clusters')
+    print('Number of significnat insights:{}'.format(len(scored_library)))
     
     
     recommended_insights = pd.DataFrame()
