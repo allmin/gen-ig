@@ -1,0 +1,11 @@
+pattern
+pandas
+numpy
+scipy
+openpyxl
+scikit-learn
+schedule
+tensorflow
+matplotlib
+sympy
+xlsxwriter

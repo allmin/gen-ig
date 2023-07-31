@@ -2,7 +2,7 @@ import pandas as pd
 from pattern.en import conjugate
 from config import system_name, scope_name, unknown_phrase, tense_dict, reserved_keywords
 import regex as re
-import os, sys
+import os, sys, pdb
 from utils.commonlib import unique, flatten, streval, first_caps
 
 
@@ -10,12 +10,13 @@ from utils.commonlib import unique, flatten, streval, first_caps
 
 
 
-def transform_tense(x, tense):
+def transform_tense(x, tense, relative_person):
     tense_tr = tense_dict[tense]
+    number_format = 'singular'
     try:
-        transformed = conjugate(x, tense = tense_tr, person = 3, number = "singular", mood = "indicative", aspect = "imperfective", negated = False)
+        transformed = conjugate(x, tense = tense_tr, person = int(relative_person), number = number_format, mood = "indicative", aspect = "imperfective", negated = False)
     except RuntimeError:
-        transformed = conjugate(x, tense = tense_tr, person = 3, number = "singular", mood = "indicative", aspect = "imperfective", negated = False)
+        transformed = conjugate(x, tense = tense_tr, person = int(relative_person), number = number_format, mood = "indicative", aspect = "imperfective", negated = False)
     return transformed
 
 def tensify(inp_str,tense):
@@ -34,7 +35,13 @@ def tensify(inp_str,tense):
             if verbs:
                 for verb in verbs:
                     verb = verb.rstrip(")").lstrip("(")
-                    transformed_verb = transform_tense(verb,tense)
+                    if '_' in verb:
+                        verb, relative_person = verb.split('_')
+                    elif ',' in verb:
+                        verb, relative_person = verb.split(',')
+                    else:
+                        relative_person = '3'
+                    transformed_verb = transform_tense(verb,tense,relative_person)
                     inp_str = inp_str.replace(tense_transform_candidate, transformed_verb)
     return inp_str
 
@@ -86,13 +93,19 @@ def get_measurement(df):
 
 
 def get_sentence(inter_phrase, inter_tense, template, measurement_phrase, measurement_unit, rw):
-    meanA, meanB, percentage, meas = rw['meanA'], rw['meanB'], rw['percentage'], eval(rw['intermediate'])['measurement']
+    if isinstance(rw['intermediate'],str):
+        meanA, meanB, medianA, percentage, meas = rw['meanA'], rw['meanB'], rw['medianA'], rw['percentage'], eval(rw['intermediate'])['measurement']
+    else:
+        meanA, meanB, medianA, percentage, meas = rw['meanA'], rw['meanB'], rw['medianA'], rw['percentage'], rw['intermediate']['measurement']
     unit = measurement_unit[meas]
     countA,countB = rw['countA'], rw['countB']
     insight_text = template.replace("!","")
     tense_list = []
     insight_text = insight_text.replace('{{mean:1}}', '{:0.2f} {}'.format(meanA, unit))
+    insight_text = insight_text.replace('{{median:1}}', '{:0.2f} {}'.format(medianA, unit))
     insight_text = insight_text.replace('{{count:1}}', '{:0.2f}'.format(countA))
+    insight_text = insight_text.replace('{{unit}}', unit)
+    insight_text = insight_text.replace('{{none:2}}', '')
     if '{{mean:2}}' in insight_text:
         insight_text = insight_text.replace('{{mean:2}}', '{:0.2f} {}'.format(meanB, unit))
     if '{{count:2}}' in insight_text:
@@ -126,8 +139,52 @@ def get_sentence(inter_phrase, inter_tense, template, measurement_phrase, measur
         overall_tense = "PaPC"
     insight_text = first_caps(insight_text)
     insight_text = tensify(insight_text,overall_tense)
-    return insight_text
+    return insight_text, overall_tense
 
+def get_contexts(irow, tn):
+    meas = irow.intermediate['measurement']
+    unit = measurement_unit[meas]
+    meas_text = tensify(measurement_phrase[meas], tn)
+    meas_text = f"{meas_text}\n({unit})"
+    contA = irow.first_context[0]
+    contB = irow.second_context[0]
+    contB = contB[1:] if contB.startswith('!') else contB
+    keyA_,contA_ = irow.intermediate[contA][0].split('$')
+
+    if contB!="measurement_benchmark":
+        keyB_,contB_ = irow.intermediate[contB][0].split('$')
+    
+    cont_df = context_definition[f'c_{contA}']
+    entities = [contA_]
+    textA = eval(cont_df[cont_df.name == keyA_]['prepositional phrase'].values[0])[0]
+    
+    if irow.change_type == "exclusion":
+        nottextA = eval(cont_df[cont_df.name == keyA_]['inversion phrase'].values[0])[0]
+    subset_count = irow.countA
+
+    if irow.test in ['benchmark','stat']:
+        textB = ''
+    else:
+        subset_count += irow.countB
+        contB = irow.second_context[0]
+        if irow.change_type == "exclusion":
+            textB = f"{nottextA}\n(on an average)" 
+        else:
+            keyB_,contB_ = irow.intermediate[contA][-1].split('$')
+            entities = [contB_]
+            textB = eval(cont_df[cont_df.name == keyB_]['prepositional phrase'].values[0])[0]
+    common = irow.common_context
+    common_text = []
+    if len(common)!=0:
+        common_ = [[i,irow.intermediate[i].split('$')] for i in common]
+        for (contC,(keyC_,contC_)) in common_:
+            entities = [contC_]
+            common_t = eval(context_definition[f'c_{contC}'][context_definition[f'c_{contC}'].name == keyC_]['prepositional phrase'].values[0])[0] 
+            common_t = tensify(common_t,tn)
+            common_text.append(common_t)
+    common_text = ', '.join(common_text)
+    common_text = f"{common_text}\n({subset_count/irow['total_count']*100:0.02f}% of all data)"
+    return textA, textB, meas_text, common_text
 
 
 
@@ -137,6 +194,8 @@ if __name__ == "__main__":
     system_definition = pd.read_excel(system_definition_file, sheet_name=sheet_names,engine='openpyxl')
     for sheet in sheet_names:
         system_definition[sheet] = system_definition[sheet].dropna(axis=0, how='all')
+    context_list = system_definition['contexts']['context'].to_list() 
+    context_definition = pd.read_excel(system_definition_file, sheet_name=["c_{}".format(i) for i in context_list],engine='openpyxl',)
     measurement_definition = system_definition['measurements']
     measurement_list = measurement_definition['measurement'].to_list()
     measurement_phrase = {k:v for k,v in zip(measurement_list, measurement_definition['phrase'].to_list())}
@@ -144,22 +203,29 @@ if __name__ == "__main__":
     measurement_benchmark = {k:v for k,v in zip(measurement_list, measurement_definition['benchmark'].to_list())}
     measurement_benchmark_text = {k:v for k,v in zip(measurement_list, measurement_definition['benchmark text'].to_list())}
     if scope_name and scope_name != '':
-        scored_file = "systems/{}/scored_insights_{}_{}.pickle".format(system_name,scope_name,system_name)
+        scored_file = "systems/{}/outputs/scored_insights_{}_{}.pickle".format(system_name,scope_name,system_name)
     else:
-        scored_file = "systems/{}/scored_insights_{}.pickle".format(system_name,system_name)
+        scored_file = "systems/{}/outputs/scored_insights_{}.pickle".format(system_name,system_name)
     if os.path.exists(scored_file):
         scored_library = pd.read_pickle(scored_file)
+        scored_library['contextA'] = ''
+        scored_library['contextB'] = ''
     else:
         print('file {} generated by score_insight_lib.py needs to be present. Please Check if scoring ran successfully.'.format(scored_file))
         print('aborting how_to_Say.py')
         sys.exit()
     insight_text_final = []
-
+    textAl = []
+    textBl = []
+    meas_textl = []
+    common_textl = []
     list_of_filters = unique(flatten([list(streval(i).keys()) for i in scored_library['intermediate']]))
     list_of_filters_AB = flatten([[i+'_A', i+'_B'] if i!='measurement' else [i] for i in list_of_filters])
     filter_dict = {i:[] for i in list_of_filters_AB}
+    filter_dict.update({'name':[]})
     for ind, row in scored_library.iterrows():
         intermediate = streval(row['intermediate'])
+        filter_dict['name'].append(row.name)
         for filt in list_of_filters:
             if filt in intermediate.keys():
                 if filt == 'measurement':
@@ -176,8 +242,15 @@ if __name__ == "__main__":
         inter_phrase = streval(row['inter_phrase'])
         inter_tense = streval(row['inter_tense'])
         template = row['template']
-        sent1 = get_sentence(inter_phrase, inter_tense, template, measurement_phrase, measurement_unit, row)
+        sent1, otense = get_sentence(inter_phrase, inter_tense, template, measurement_phrase, measurement_unit, row)
+        textA, textB, meas_text, common_text = get_contexts(row, otense)
+        textAl.append(textA)
+        textBl.append(textB)
+        meas_textl.append(meas_text)
+        common_textl.append(common_text)
         sent2 = sent1.replace("""{{comparison}}""",row['comparison'])
+        if row['comparison_post'] != row['comparison_pre']:
+            sent2 = sent2.replace("""{{comparison_pre}}""",row['comparison_pre']).replace("""{{comparison_post}}""",row['comparison_post'])
         if unknown_phrase:
             sent2 = sent2.replace("""<<unknown>>""",unknown_phrase)
         if ind == 0:
@@ -188,15 +261,20 @@ if __name__ == "__main__":
         if '{{measurement}}' in sent2:
             pass
     filter_df = pd.DataFrame(filter_dict)
+    filter_df = filter_df.set_index('name')
     for col in filter_df.columns:
         scored_library[col] = filter_df[col]
     scored_library['insight_text_final'] = insight_text_final
+    scored_library['textA'] = textAl
+    scored_library['textB'] = textBl
+    scored_library['meas_text'] = meas_textl
+    scored_library['common_text'] = common_textl
     scored_library['relative_period_A'], scored_library['relative_period_B']  = get_relative_period(scored_library)
     # scored_library['measurement']  = get_measurement(scored_library)
     scored_library.sort_values(by='pscore_final', ascending=False, inplace=True)
     if scope_name and scope_name != '': 
-        scored_library.to_excel("systems/{}/scored_insights_final_{}_{}.xlsx".format(system_name,scope_name,system_name), index=False)
-        scored_library.to_pickle("systems/{}/scored_insights_final_{}_{}.pickle".format(system_name,scope_name,system_name), protocol=4)
+        scored_library.to_excel("systems/{}/outputs/scored_insights_final_{}_{}.xlsx".format(system_name,scope_name,system_name), index=False)
+        scored_library.to_pickle("systems/{}/outputs/scored_insights_final_{}_{}.pickle".format(system_name,scope_name,system_name), protocol=4)
     else:
-        scored_library.to_excel("systems/{}/scored_insights_final_{}.xlsx".format(system_name,system_name), index=False)
-        scored_library.to_pickle("systems/{}/scored_insights_final_{}.pickle".format(system_name,system_name), protocol=4)
+        scored_library.to_excel("systems/{}/outputs/scored_insights_final_{}.xlsx".format(system_name,system_name), index=False)
+        scored_library.to_pickle("systems/{}/outputs/scored_insights_final_{}.pickle".format(system_name,system_name), protocol=4)

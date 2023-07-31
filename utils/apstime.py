@@ -5,8 +5,15 @@ import time
 
 
 class TimeHelper():
-    def __init__(self,time_zone=None):
+    def __init__(self,time_zone=None, format='%Y-%m-%d %H:%M:%S'):
         self.time_zone = time_zone
+        self.format=format
+
+    def convert_string_date_to_datetime(self, str_date):
+        format=self.format
+        dtime = datetime.datetime.strptime(str_date,format)
+        dtime = dtime.replace(tzinfo=tz.gettz(self.time_zone))
+        return dtime
 
     def convert_epoch_time_to_day_of_the_week(self,epoch):
         local_time_object = datetime.datetime.fromtimestamp(epoch,tz=tz.gettz(self.time_zone))

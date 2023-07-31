@@ -1,22 +1,21 @@
 # gen-ig
 GEN-IG : a GENeric toolkit for schema-driven Insight Generation
 - In this repository, we provide a fully customizable insight generator that can be used for any insight generation application.
-- The main scripts are : 
+- installation: Python3.8 -> pip install -r requirements.txt will install all the dependencies
+- The main scripts are: 
 -- 1) generate_insight_lib.py: To generate an insight library. It needs a system_definition file
 -- 2) score_insight_lib.py: to score the insight library. It requires data, system definitions and an insight_library file
 -- 3) how_to_say.py: cleans the text suitable for presentation
 -- 4) recommend_insights: recommends N=20 diverse insights
-- The system definitions help to define the entire IG system. In this repository, system definitions are by default provided for the hospital utilization (igt) and the "sleep" use case (sleep). 
+- The system definitions help to define the entire IG system. In this repository, system definitions are by default provided for an abstract "example1" use case that contains measurements and contexts. 
 - Note: 
 -- The end-to-end.py runs all the pipeline successively.
--- The "igt" system only supports generate_insight_lib.py
--- The "sleep" system supports both generate_insight_lib.py and score_insight_lib.py. However, the data_sleep.pickle must be present in systems/sleep/
 -- The config.py comes handy in defining important configurations of the insight generator
 
 ## config.py
-- Mention the system name in the config.py file as "igt","sleep", or anything else to choose the appropriate system
+- Mention the system name in the config.py file as "example", or anything else to choose the appropriate system
 - Name your system difinition files, data files, etc with the same suffix (see example systems in ./systems)
-- Mention the data_file_format (The format in which the ata is presented to the IG. preferably pickle)
+- Mention the data_file_format (The format in which the data is presented to the gen-ig. preferably pickle)
 - scope_name applies when each IG is run to a specific customer/ user/ hospital. 
 -- if scope_name is defined provide the data for each scope in .systems/<system_name>/data_<scope_name>_<system_name>.pickle
 -- if scope_name is not defined given provide the data for each scope in .systems/<system_name>/data_<system_name>.pickle
@@ -35,7 +34,7 @@ GEN-IG : a GENeric toolkit for schema-driven Insight Generation
 |SNo|Component|Description|example|
 |---|---------|-----------|-------|
 |1|schema num|Specify the identifier for the schema|1|
-|2|template|Specify the structure for the schema. It can have zero or more common contexts, two comparative contexts. the second comparative context could be same as the first, an inversion of the first or a benchmark | {{period:1}} the {{measurement}} was {{comparison}} {{period:2}} <br><br> {{period:1}} the {{measurement}} is {{comparison}} than {{!period:2}} <br><br> {{period:1}} the {{measurement}} is {{comparison}} than {{measurement_benchmark:2}} <br><br> optionally, you may include {{mean:1}}, {{mean:2}} and {{percentage}} to display mean of first context, mean of second context and percentage difference of fist and second contexts respectively.|
+|2|template|Specify the structure for the schema. It can have zero or more common contexts, two comparative contexts. the second comparative context could be same as the first, an inversion of the first or a benchmark | {{period:1}} the {{measurement}} was {{comparison}} {{period:2}} <br><br> {{period:1}} the {{measurement}} is {{comparison}} than {{!period:2}} <br><br> {{period:1}} the {{measurement}} is {{comparison}} than {{measurement_benchmark:2}} <br><br> optionally, you may include {{mean:1}}, {{mean:2}} and {{percentage}} to display mean of first context, mean of second context and percentage difference of the first and second contexts respectively.|
 |3|silent_contexts|input contexts that needs to be considered in the insight, but not present in the text|['user_id','period:2']
 |4|applicable_items| it is a dictionary containing the measurements applicable to the schema. use 'all' to use all measurements| {'measurement':'all'} / {'measurement':['room utilization', 'on-time starts', 'turn-around times']}
 |5|example| representative examples for each schema| This week the room utilization is less than last week <br><br> On Mondays the room utilization is less than other days <br><br> On Mondays the room utilization is greater than 85%|
@@ -45,7 +44,7 @@ GEN-IG : a GENeric toolkit for schema-driven Insight Generation
 - Note: to denote the comparative contexts, the first context has a suffix of :1 and the second context gets a suffix :2
 
 ### sheet2: contexts
-- In this sheet we mention all the contexts being compared int the insight tool.
+- In this sheet we mention all the contexts being compared in the insight tool.
 - Note: Avoid using the following reserved names for contexts:
 -- be
 -- measurement
@@ -73,7 +72,7 @@ GEN-IG : a GENeric toolkit for schema-driven Insight Generation
 |11|unit|specify the unit|s|
 
 ### sheet4: exclusions
-- The exclusions allow us to eliminate certain insight occurrences, for example, we dont want to compare room utilizations in january vs any other context.
+- The exclusions allow us to eliminate certain insight occurrences, for example, we don’t want to compare room utilization in January vs any other context.
 - A initial rough run on the system definition gives rise to a library file. We may skim through this library file to define the exclusions for subsequent runs
 
 |SNo|Component|Description|example|
@@ -98,10 +97,10 @@ GEN-IG : a GENeric toolkit for schema-driven Insight Generation
 |5|inverse query|a pandas query to filter the contexts from the inverse contexts of corresponding contexts in 'sql' column|["data['categorical room utilization'] != {}".format(i) for i in entities]|
 |6|inversion phrase|This is the phrase to denote inversions to any given entity|when not|
 |7|pair id|comparable subcontests have same pair id. it is different otherwise|1|
-|8|consecutive constrain|if true, will compare only consecutive entities. For example Januare vs february and not january vs march|False|
+|8|consecutive constrain|if true, will compare only consecutive entities. For example January vs february and not january vs march|False|
 
 
 ## preprocessing script.
 optionally, a file names preprocess_data.py can be created in the correspondin system folder to perform preprocessing.
-See example 'igt1'
+
 
