@@ -84,7 +84,7 @@ def load_base_model(base_path, NUMBER_OF_BINS):
     return base_model
 
 def get_augmented_model(user, num_bins, f_size=100):
-    base_path="systems/{}/feedback_models/base_model.hdf5".format(system_name)
+    base_path="systems/{}/outputs/feedback_models/base_model.hdf5".format(system_name)
     LR = 10e-3
     sgd = optimizers.SGD(lr=LR, decay=1e-6, momentum=0.9, nesterov=True)
     base_model = load_base_model(base_path, num_bins)
@@ -103,9 +103,9 @@ def get_augmented_model(user, num_bins, f_size=100):
     augmented_model = Model(base_model.inputs + [input_layer3], out)
     sgd1 = tf.keras.optimizers.SGD(learning_rate=0.005, momentum=0.0, nesterov=False, name="SGD")
     augmented_model.compile(optimizer=sgd1, loss='mse', metrics=['accuracy'])
-    if os.path.exists('systems/{}/feedback_models/model_{}.hdf5'.format(system_name, user)):
-        os.remove('systems/{}/feedback_models/model_{}.hdf5'.format(system_name, user))
-    #   augmented_model.load_weights('systems/{}/feedback_models/model_{}.hdf5'.format(system_name, user))
+    if os.path.exists('systems/{}/outputs/feedback_models/model_{}.hdf5'.format(system_name, user)):
+        os.remove('systems/{}/outputs/feedback_models/model_{}.hdf5'.format(system_name, user))
+    #   augmented_model.load_weights('systems/{}/outputs/feedback_models/model_{}.hdf5'.format(system_name, user))
     return augmented_model
 
 def generate_pseudo_labeled_data(labelled_data, unlabelled_data):
@@ -140,8 +140,8 @@ if __name__ == '__main__':
     user_algorithm_dict = {k:2 for k in user_list}
     for (user, algorithm) in user_algorithm_dict.items():
         if algorithm == 2:
-            fb_path = 'systems/{}/feedbacks/{}.xlsx'.format(system_name,user)
-            fb_path2 = 'systems/{}/feedbacks/{}.pickle'.format(system_name,user)
+            fb_path = 'systems/{}/outputs/feedbacks/{}.xlsx'.format(system_name,user)
+            fb_path2 = 'systems/{}/outputs/feedbacks/{}.pickle'.format(system_name,user)
             if os.path.exists(fb_path):
                 fb_df = pd.read_excel(fb_path, engine='openpyxl')
                 fb_df2 = pd.read_pickle(fb_path2)
@@ -155,13 +155,13 @@ if __name__ == '__main__':
                 fb_df = fb_df[fb_df['timestamp_feedback'] > past_time]
             else:
                 continue
-            insight_path = 'systems/{}/scored_insights_final_with_clusters_{}_{}.pickle'.format(system_name,user,system_name)
+            insight_path = 'systems/{}/outputs/scored_insights_final_with_clusters_{}_{}.pickle'.format(system_name,user,system_name)
             if os.path.exists(insight_path):
                 insight_df = pd.read_pickle(insight_path)
             feat_len = len(insight_df.feature_vector.iloc[0])
             model = get_augmented_model(user, num_bins=1, f_size=feat_len)
             pseudo_labelled_df = generate_pseudo_labeled_data(fb_df, insight_df)
-            model_path = 'systems/{}/feedback_models/model_{}.hdf5'.format(system_name,user)
+            model_path = 'systems/{}/outputs/feedback_models/model_{}.hdf5'.format(system_name,user)
             
             print('training neural model')
 
@@ -170,13 +170,13 @@ if __name__ == '__main__':
             pseudo_labelled_df['meanB_'] = [float(re.findall('([0-9]+[.]*[0-9]*)', i)[0]) for i in pseudo_labelled_df['meanB_']]
             
             train_model(model, pseudo_labelled_df, fb_df)
-            pseudo_labelled_df.to_excel('systems/{}/pseudo_labelled_{}.xlsx'.format(system_name,user), index=False)
+            pseudo_labelled_df.to_excel('systems/{}/outputs/pseudo_labelled_{}.xlsx'.format(system_name,user), index=False)
             model.load_weights(model_path)
             # feats = np.array([list(i) for i in pseudo_labelled_df['feature_vector'].values])
             neural_predicted_labels = get_predictions(model,pseudo_labelled_df)
             # neural_predicted_labels = pseudo_labelled_df['labels']
             pseudo_labelled_df['neural_predicted_labels'] = neural_predicted_labels
-            pseudo_labelled_df.to_excel('systems/{}/neuro_labelled_{}.xlsx'.format(system_name,user), index=False)
+            pseudo_labelled_df.to_excel('systems/{}/outputs/neuro_labelled_{}.xlsx'.format(system_name,user), index=False)
             pseudo_labelled_df = pseudo_labelled_df[(pseudo_labelled_df['neural_predicted_labels'] == 1) & (pseudo_labelled_df['labels']==1)]
             cluster_labels = perform_kmeans(K=num_insights_needed,X=pseudo_labelled_df['feature_vector'])
             pseudo_labelled_df['cluster_labels'] = cluster_labels#fb_df2['cluster_labels']
@@ -195,7 +195,7 @@ if __name__ == '__main__':
                 else:
                     recommended_insights = pd.concat([recommended_insights,insight_candidate])
 
-            recommended_insights.to_excel('systems/{}/neural_recommended_{}.xlsx'.format(system_name,user), index=False)
+            recommended_insights.to_excel('systems/{}/outputs/neural_recommended_{}.xlsx'.format(system_name,user), index=False)
 
 
         

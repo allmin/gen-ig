@@ -17,10 +17,10 @@ import datetime, itertools
 import regex as re
 from scipy.stats import norm
 from pattern.en import conjugate
-import pandasql
 from scipy.stats import ks_2samp, mannwhitneyu
 import pdb , os, shutil, hashlib, sys
-from config import system_name, reserved_keywords, tense_dict
+from config import system_name, reserved_keywords, tense_dict, verbose, dummy_group
+
 
 
 
@@ -81,7 +81,7 @@ def get_single_enumerations(context_definition, context_sheet, applicable_items,
             continue
         entities = eval(context['entities'])
         num_entities = len(entities)
-        entity_names = [context_name+'_'+str(i) for i in eval(context['entities'])]
+        entity_names = [context_name+'$'+str(i) for i in eval(context['entities'])]
         entity_phrases = careful_eval(context, 'prepositional phrase', entities)
         entity_tense = careful_eval(context, 'tense', entities, 'PaPC')
         entity_queries = careful_eval(context, 'query', entities)
@@ -114,6 +114,9 @@ def careful_eval(contxt, col, entities=None, default=''):
             res = eval(exp)
         except:
             res = [exp]
+    if res is None:
+        res = ['']*num_entities
+        print(f"Warning: define a inversion_phrase for all rows in the context:{contxt}")
     if len(res)!= num_entities:  
         print("unequal exp {} for number of entities: {} of type: {} ".format(res,num_entities,col))
         res =  res*num_entities
@@ -137,7 +140,7 @@ def get_double_enumerations(context_definition, context_sheet, applicable_items)
         num_entities = len(entities)
         pair_id = [context['pair id']]*num_entities
         consecutive_constrain = [context['consecutive constrain']]*num_entities
-        entity_names = [context_name+'_'+str(i) for i in entities]
+        entity_names = [context_name+'$'+str(i) for i in entities]
         entity_phrases = careful_eval(context, 'prepositional phrase', entities)
         if 'tense' in context:
             entity_tenses = careful_eval(context, 'tense', entities, 'PaPC')
@@ -223,19 +226,21 @@ def generate_intermediate_insight(first_context, second_context, common_context,
         for p in comb_properties:
             combinations_prop_dict[p] = intellicat_dict(combinations_prop_dict[p], e_props_dict[p])
 
-    elif second_context[0] == "measurement_benchmark": #comparative_context -> benchmark insights
+    elif second_context[0] in ["measurement_benchmark","none"]: #comparative_context -> benchmark insights
+        keyword = "{{" + second_context[0] + "}}"
         first_context_l = first_context[0]
         second_context_l = second_context[0]
         context_sheet = "c_"+first_context_l
         enumerations = get_single_enumerations(context_definition, context_sheet, applicable_items)
         e_props_dict = {}
-        e_props_dict['names'] = [{first_context_l:(e_name, """{{measurement_benchmark}}""")} for e_name in enumerations['names']]
-        e_props_dict['phrases'] = [{first_context_l:(e_phrase, """{{measurement_benchmark}}""")} for (e_phrase, e_inv_phrase) in zip(enumerations['phrases'], enumerations['inversion_phrases'])]
-        e_props_dict['tenses'] = [{first_context_l:(e_tense, """{{measurement_benchmark}}""")} for e_tense in enumerations['tenses']]
-        e_props_dict['queries'] = [{first_context_l:(e_query, """{{measurement_benchmark}}""")} for e_query in enumerations['queries']]
+        e_props_dict['names'] = [{first_context_l:(e_name, keyword)} for e_name in enumerations['names']]
+        e_props_dict['phrases'] = [{first_context_l:(e_phrase, keyword)} for (e_phrase, e_inv_phrase) in zip(enumerations['phrases'], enumerations['inversion_phrases'])]
+        e_props_dict['tenses'] = [{first_context_l:(e_tense, keyword)} for e_tense in enumerations['tenses']]
+        e_props_dict['queries'] = [{first_context_l:(e_query, keyword)} for e_query in enumerations['queries']]
         for p in comb_properties:
             combinations_prop_dict[p] = intellicat_dict(combinations_prop_dict[p], e_props_dict[p])
     
+
     e_measurements = [{'measurement':measurement} for measurement in measurements]
     for p in comb_properties:
         combinations_prop_dict[p] = intellicat_dict(combinations_prop_dict[p],e_measurements)
@@ -333,16 +338,22 @@ def get_query(inter_query, inter_groups):
     groupAB = flexi_eval(measurement_group[inter_query['measurement']])
     groupAB = clean_grouping_for_real(groupAB) 
     agg_fun = measurement_aggregate[inter_query['measurement']]
-    queryA += """].groupby(by={}).{}()['{}']""".format(str(groupAB),agg_fun, meas)
-    queryB += """].groupby(by={}).{}()['{}']""".format(str(groupAB),agg_fun, meas)
+    numeric_str = "numeric_only=True" if agg_fun!='count' else ""
+    queryA += """].groupby(by={}).{}({})['{}']""".format(str(groupAB),agg_fun,numeric_str, meas)
+    queryB += """].groupby(by={}).{}({})['{}']""".format(str(groupAB),agg_fun,numeric_str, meas)
+    if 'measurement_benchmark' in queryB:
+        queryB = "measurement_benchmark['{}']".format(inter_query['measurement'])
     if 'measurement_benchmark' in queryB:
         queryB = "measurement_benchmark['{}']".format(inter_query['measurement'])
     # queryB = queryB.replace("""data[({{measurement_benchmark}})]""","measurement_benchmark").replace(""".groupby(by=['{{measurement_benchmark}}'])."""+agg_fun+"()","")
     return queryA, queryB
 
 def clean_grouping_for_dummy(gp):
+    # doesnt include any groups with a !, 
     if isinstance(gp,str):
         gp = [gp]
+    if dummy_group:
+        gp = [i for i in gp if i in dummy_group]
     final_gps = []
     for g in gp:
         if g.startswith('!'):
@@ -545,7 +556,7 @@ def parse_schema_classes(system_definition, ignore_placeholders):
                 common_context.append(component)
         common_context = c_intersection(common_context, context_list)
         first_context = unique(c_intersection(first_context, context_list))
-        second_context = unique(c_intersection(second_context, context_list, additional_contexts=['measurement_benchmark']))
+        second_context = unique(c_intersection(second_context, context_list, additional_contexts=['measurement_benchmark', 'none']))
         try:
             if second_context[0].startswith("!") and first_context[0] == second_context[0][1:]:
                 change_type = "exclusion"
@@ -590,11 +601,24 @@ def create_measurement_detail_lookup(col, measurement_list, system_definition, d
 
 #%%
 if __name__ == "__main__":
+    if not os.path.exists('systems/{}/outputs'.format(system_name)):
+        os.makedirs('systems/{}/outputs'.format(system_name))
+    pick_entities_script_path = 'systems.{}.pick_entities'.format(system_name)
+    pick_entities_location = pick_entities_script_path.replace('.','/')+'.py'
+
+    if os.path.exists(pick_entities_location):
+        print('detected pick_entities script') if verbose else None
+        import importlib
+        pick_entities = importlib.import_module(pick_entities_script_path)
+        pick_entities_script_exists = True
+    else:
+        pick_entities_script_exists = False
+
     project_folder = './'
     system_definition_file = "systems/{}/system_definition_{}.xlsx".format(system_name,system_name)
     check_if_exist(system_definition_file)
     entities_file = "systems/{}/unique_entities.xlsx".format(system_name)
-    
+
     if os.path.exists(entities_file):
         xls_file = pd.ExcelFile(entities_file)
         sheet_names = xls_file.sheet_names
@@ -603,6 +627,8 @@ if __name__ == "__main__":
     sheet_names = ['schemas','measurements','contexts','exclusions']                    
     system_definition = pd.read_excel(system_definition_file, sheet_name=sheet_names,engine='openpyxl')
     system_definition['schemas'] = system_definition['schemas'].dropna(subset=['active'])
+    system_definition['schemas'] = system_definition['schemas'][system_definition['schemas']['active']==1]
+  
     for sheet in sheet_names:
         system_definition[sheet] = system_definition[sheet].dropna(axis=0, how='all')
     today = datetime.datetime.now()
@@ -617,12 +643,15 @@ if __name__ == "__main__":
     context_list = system_definition['contexts']['context'].to_list() 
     context_definition = pd.read_excel(system_definition_file, sheet_name=["c_{}".format(i) for i in context_list],engine='openpyxl',)
     sel_cols = measurement_list + ['date']  
-    class_df = parse_schema_classes(system_definition,  ignore_placeholders = ['mean:1', 'mean:2', 'count:1', 'count:2', 'percentage'])
+    class_df = parse_schema_classes(system_definition,  ignore_placeholders = ['mean:1', 'mean:2', 'median:1', 'median:2', 'count:1', 'count:2', 'percentage'])
+
+
     """
     generating the insight statements and queries
-    
     """
-    statement_library_dict = {"schema_num":[], "insight_num":[], "intermediate":[], "inter_phrase":[], "inter_tense":[], "template":[], "insight_text":[], "queryA":[], "queryB":[], "dummyqueryA":[], "dummyqueryB":[], "scoring_type":[],"tag":[]}
+
+    statement_library_dict = {"schema_num":[], "insight_num":[], "intermediate":[], "first_context":[], 
+                            "second_context":[], "common_context":[], "change_type":[],"inter_phrase":[], "inter_tense":[], "template":[], "insight_text":[], "queryA":[], "queryB":[], "dummyqueryA":[], "dummyqueryB":[], "scoring_type":[],"tag":[]}
     for ind,schema in tqdm(class_df.iterrows()):
         schema_num = schema['schema_num']
         scoring_type = schema['scoring_type']
@@ -639,10 +668,15 @@ if __name__ == "__main__":
         for insight_num,(inter_name, inter_phrase, inter_tense, inter_query) in enumerate(zip(combi_names, combi_phrases, combi_tenses, combin_queries)):
             # if schema_num != 5 or insight_num!=2:
             #     continue
+
             statement_library_dict["schema_num"].append(schema_num)
             statement_library_dict["scoring_type"].append(scoring_type)
             statement_library_dict["insight_num"].append(insight_num)
             statement_library_dict["intermediate"].append(inter_name)
+            statement_library_dict["change_type"].append(change_type)
+            statement_library_dict["first_context"].append(first_context)
+            statement_library_dict["second_context"].append(second_context)
+            statement_library_dict["common_context"].append(common_context)
             insight_text = get_sentence_raw(inter_phrase, template, measurement_phrase, measurement_benchmark_text)
             statement_library_dict["insight_text"].append(insight_text)
             queryA, queryB = get_query(inter_query, inter_groups=None)
@@ -658,6 +692,7 @@ if __name__ == "__main__":
             statement_library_dict["tag"].append(tag)
             
     statement_library_df = pd.DataFrame(statement_library_dict)
+    print(len(statement_library_df),' statements in the library')
     exclusion_definition = system_definition['exclusions']
     statement_library_df = remove_exclusions(statement_library_df, exclusion_definition=exclusion_definition)
     statement_library_df.to_excel("systems/{}/statement_library_{}.xlsx".format(system_name,system_name), index=False)

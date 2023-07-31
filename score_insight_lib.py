@@ -8,10 +8,13 @@ from config import system_name, data_file_format, scope_name, date_model, pre_de
 from tqdm import tqdm
 from dateutil import tz
 import multiprocessing
+import pdb
 
-try:
+if (system_name in pre_defined_systems) and ('timezone_dict' in pre_defined_systems[system_name]) and (scope_name in pre_defined_systems[system_name]['timezone_dict']):
     time_zone = pre_defined_systems[system_name]['timezone_dict'][scope_name]
-except KeyError:
+elif (system_name in pre_defined_systems) and ('timezone_dict' in pre_defined_systems[system_name]):
+    time_zone = pre_defined_systems[system_name]['timezone']
+else:
     time_zone = None
 
 
@@ -31,7 +34,6 @@ def create_dummy_data(data_date, date_model, system_name, time_zone=time_zone):
     data_date_set = set(data_date)
     all_dates = list(dates.union(data_date_set))
     dummy_data = pd.DataFrame({'date':all_dates})
-
     if preprocess_script_exists:
         dummy_data = preprocess_data.preprocess(dummy_data, dummy = True, time_zone=time_zone)
     dummy_data['available'] = [True if (i>=min_data_date and i<=(max_data_date + 86400)) else False for i in dummy_data.day_date]
@@ -82,6 +84,7 @@ def read_file(prefix, system_name, input_file_type):
         df = pd.read_pickle(in_file)
     else:
         df = sys.exit(1)
+    print(f"data size while reading: {len(df)}")
     return df
 
 def read_data(system_name, input_file_type, scp_name=""):
@@ -93,6 +96,110 @@ def read_data(system_name, input_file_type, scp_name=""):
     if preprocess_script_exists:
         df = preprocess_data.preprocess(df, dummy = False, time_zone=time_zone)
     return df
+
+def process_test1_data(data, dummy = False):
+    data['day_date'] = [convert_epoch_time_to_day_date(i) for i in data['date']]
+    data['day_time'] = [convert_epoch_time_to_day_time(i) for i in data['date']]
+    data['dayofweek'] = [convert_epoch_time_to_day_of_the_week(i) for i in data['date']]
+    data['year'] = [convert_epoch_time_to_year(i) for i in data['date']]
+    data['month'] = [convert_epoch_time_to_month(i) for i in data['date']]
+    data['quarter'] = [((i-1)//3+1) for i in data['month']]
+    data['week'] = data.date.apply(pd.to_datetime, unit='s')
+    data['week'] = data['week'].dt.strftime('%U')
+    data['available'] = True
+    return data
+
+def process_sleep_data(data, dummy = False):
+    data['date'] = [time.mktime(t) for t in data['sleep_end']]
+    data['dayofweek'] = data['weekday']
+    data['week'] = data.date.apply(pd.to_datetime, unit='s')
+    data['week'] = data['week'].dt.strftime('%U')
+    data['available'] = True
+    return data
+
+# def process_iphil_data(data, dummy = False):
+#     if not dummy:
+#         data['date'] = [int(i)/1000 for i in data['date']]
+#     data['day_date'] = [convert_epoch_time_to_day_date(i) for i in data['date']]
+#     data['day_time'] = [convert_epoch_time_to_day_time(i) for i in data['date']]
+#     data['dayofweek'] = [convert_epoch_time_to_day_of_the_week(i) for i in data['date']]
+#     data['year'] = [convert_epoch_time_to_year(i) for i in data['date']]
+#     data['month'] = [convert_epoch_time_to_month(i) for i in data['date']]
+#     data['quarter'] = [((i-1)//3+1) for i in data['month']]
+#     data['week'] = data.date.apply(pd.to_datetime, unit='s')
+#     data['week'] = data['week'].dt.strftime('%U')
+#     data['available'] = True
+#     return data
+
+def process_diabetes_data(data, dummy = False):
+    data['date'] = [int(i)/1000 for i in data['date']]
+    data['day_date'] = [convert_epoch_time_to_day_date(i) for i in data['date']]
+    data['day_time'] = [convert_epoch_time_to_day_time(i) for i in data['date']]
+    data['dayofweek'] = [convert_epoch_time_to_day_of_the_week(i) for i in data['date']]
+    data['year'] = [convert_epoch_time_to_year(i) for i in data['date']]
+    data['month'] = [convert_epoch_time_to_month(i) for i in data['date']]
+    data['quarter'] = [((i-1)//3+1) for i in data['month']]
+    data['week'] = data.date.apply(pd.to_datetime, unit='s')
+    data['week'] = data['week'].dt.strftime('%U')
+    data['available'] = True
+    drift_windows = [[0.5,1.5],[1.5,3],[3,4]]
+    cutoff = 1.5
+    last_hour = {'drift_{}-{}'.format(i,j):[] for i,j in drift_windows}
+    last_hour.update({'alert_{}-{}'.format(i,j):[] for i,j in drift_windows})
+    
+    if dummy == False:# and 'time_since_last_meal' not in data.columns:
+        data['glucose'] = data['Sensor Glucose (mmol/L)']
+        data = data.dropna(subset=['glucose'])
+        data['glucose'] = data['glucose'].astype(np.float32)
+        meal_lookup = data.dropna(subset=['Meal'])[['ID','date', 'Meal','Meal Size']]
+        meal_parameters = ['date','Meal','Meal Size']
+        last_meal_dict = {'last_meal_{}'.format(k):[] for k in meal_parameters}
+        data_id = {}
+        for ind, row in tqdm(data[['ID','date']].iterrows()):
+            last_meal = {}
+            last_meal['date'] = np.nan
+            last_meal['Meal'] = np.nan
+            last_meal['Meal Size'] = np.nan
+            latest_date = row['date']
+            filtered_meals = meal_lookup[(meal_lookup.ID == row['ID']) & (meal_lookup.date < latest_date)]
+            if len(filtered_meals) > 0:
+                last_meal = filtered_meals[filtered_meals.date == filtered_meals.date.max()].iloc[0]
+                #compute alerts
+                for hour_st,hour_end in drift_windows:
+                    time_of_end_of_window = row['date']
+                    time_of_last_meal_actual = last_meal.date
+                    time_of_last_meal_estimate = time_of_end_of_window - (hour_end*3600)
+                    time_since_last_meal = time_of_last_meal_estimate - time_of_last_meal_actual # time of the beginning of the window
+                    time_of_start_of_window = time_of_end_of_window - ((hour_end - hour_st)*3600)
+                    if  time_since_last_meal>0 and time_since_last_meal<100: 
+                        x_hour_window_glucose = data[(data['date'] >= time_of_start_of_window) & (data['date'] <= time_of_end_of_window)]['glucose']
+                        delta = x_hour_window_glucose.max()  - x_hour_window_glucose.min()
+                        last_hour['drift_{}-{}'.format(hour_st,hour_end)].append(delta)
+                        if delta > cutoff:
+                            last_hour['alert_{}-{}'.format(hour_st,hour_end)].append('Alert')
+                        else:
+                            last_hour['alert_{}-{}'.format(hour_st,hour_end)].append('')        
+                        
+                    else:
+                        last_hour['alert_{}-{}'.format(hour_st,hour_end)].append('')
+                        last_hour['drift_{}-{}'.format(hour_st,hour_end)].append('')
+            else:
+                for hour_st,hour_end in drift_windows:
+                    last_hour['alert_{}-{}'.format(hour_st,hour_end)].append('')        
+                    last_hour['drift_{}-{}'.format(hour_st,hour_end)].append('') 
+            for k in meal_parameters:
+                last_meal_dict['last_meal_{}'.format(k)].append(last_meal[k])
+        for k in last_meal_dict.keys():
+            data[k] = last_meal_dict[k]
+        for k in last_hour.keys():
+            data[k] = last_hour[k]
+        data['last_meal_Meal Size'] = data['last_meal_Meal Size'].replace({'Meal Size Small':'small', 'Meal Size Large':'large', 'Meal Size Medium':'medium'})
+        data['last_meal_Meal'] = data['last_meal_Meal'].replace({'Breakfast':'breakfast', 'Lunch':'lunch', 'Dinner':'dinner'})
+        data['time_since_last_meal'] = (data['date'] - data['last_meal_date'])/60
+        data.to_pickle('systems/diabetes/data_diabetes.pickle')
+        data.to_excel('systems/diabetes/data_diabetes.xlsx')
+    return data
+
 
 def read_library(system_name, input_file_type):
     df = read_file('systems/{}/statement_library_'.format(system_name), system_name, input_file_type)
@@ -147,7 +254,7 @@ def get_completeness(countA, countA_):
         res = 1-((countA_ - countA)/countA_)
     else:
         res = 0
-    return res
+    return min(1,res)
 
 def flexi_eval(sinp):
     try:
@@ -174,17 +281,21 @@ def get_stats(params):
     (irow, (data, dummy_data, measurement_benchmark_text, benchmark_comparison_phrase, measurement_comparison_phrase, measurement_tolerance, now_details, measurement_benchmark)) = params
     inter = irow['intermediate']
     test = irow['scoring_type']
+
     insight_text = irow['insight_text']
     qA,qB = irow['queryA'], irow['queryB']
     dqA,dqB = irow['dummyqueryA'], irow['dummyqueryB']
-    distA, countA = get_data(qA, data, dummy_data, now_details)
-    distA_,countA_ = get_data(dqA, data, dummy_data, now_details)
+    variables = {'data':data, 'dummy_data':dummy_data}
+    distA, countA,tc = get_data(qA, variables, now_details, get_total_count=True)
+    distA_,countA_,_ = get_data(dqA, variables, now_details)
     if test == 'benchmark':
         distB = eval(qB) 
         countB,countB_ = 1,1
+    elif test == 'stat':
+        distB, countB, countB_ = distA.head(0), 0, 0
     else:
-        distB,countB = get_data(qB, data, dummy_data, now_details) 
-        _,countB_ = get_data(dqB, data, dummy_data, now_details)
+        distB,countB,_ = get_data(qB, variables, now_details) 
+        _,countB_,_ = get_data(dqB, variables, now_details)
     metric_name = eval_if_str(inter)['measurement']
     comparison_dict = measurement_comparison_phrase[metric_name]   
     if dqA == dqB:
@@ -194,8 +305,15 @@ def get_stats(params):
     completeness_A = get_completeness(countA, countA_)
     completeness_B = get_completeness(countB, countB_)
     row = {}
+    row['test'] = test
+    row['total_count'] = tc
+    row['first_context'] = irow['first_context']
+    row['second_context'] = irow['second_context']
+    row['common_context'] = irow['common_context']
     row['meanA'] = 0.0
     row['meanB'] = 0.0
+    row['medianA'] = 0.0
+    row['medianB'] = 0.0
     row['countA'] = countA
     row['countB'] = countB
     row['countA_'] = countA_
@@ -223,6 +341,10 @@ def get_stats(params):
                 meanB = distB.mean(skipna = True)
                 row['meanA'] = meanA
                 row['meanB'] = meanB
+                medianA = distA.median(skipna = True)
+                medianB = distB.median(skipna = True)
+                row['medianA'] = medianA
+                row['medianB'] = medianB
                 row['percentage'] = get_percentage(meanA, meanB)
                 row['difference'] = get_difference(meanA, meanB)
                 row['comparison'] = get_comparison(meanA, meanB, comparison_dict)
@@ -239,6 +361,10 @@ def get_stats(params):
                 meanB = distB.mean(skipna = True)
                 row['meanA'] = meanA
                 row['meanB'] = meanB
+                medianA = distA.median(skipna = True)
+                medianB = distB.median(skipna = True)
+                row['medianA'] = medianA
+                row['medianB'] = medianB
                 row['comparison'] = get_comparison(meanA, meanB, comparison_dict)
                 row['percentage'] = get_percentage(meanA, meanB)
                 row['difference'] = get_difference(meanA, meanB)
@@ -252,12 +378,15 @@ def get_stats(params):
                 row['score_type'] = 'regular'
             elif countA < 10  or countB < 10:
                 meanA,meanB = 0,0
+                medianA,medianB = 0,0
                 if countA>0:
                     meanA = distA.mean(skipna = True)
                 if countB>0:
                     meanB = distB.mean(skipna = True)
                 row['meanA'] = meanA
                 row['meanB'] = meanB
+                row['medianA'] = medianA
+                row['medianB'] = medianB
                 row['percentage'] = get_percentage(meanA, meanB)
                 row['difference'] = get_difference(meanA, meanB)
                 row['score_type'] = 'irregular'
@@ -265,6 +394,9 @@ def get_stats(params):
         distA = distA.dropna()
         if countA > 0:
             meanA = distA.mean(skipna = True)
+            row['meanA'] = distA.mean(skipna = True)            
+            medianA = distA.median(skipna = True)
+            row['medianA'] = medianA
             measurement = meanA
             conditions = eval(distB)
             expressions = [(ind,j) for (ind,(i,j)) in enumerate(zip(conditions,eval(benchmark_comparison_phrase[metric_name]))) if i]
@@ -272,12 +404,13 @@ def get_stats(params):
             row['comparison'] = expressions[0][1]
             row['score_type'] = 'benchmark'
             cond_binomial = eval(distB.replace('measurement', 'distA'))[expressions[0][0]]
-            row['meanA'] = distA.mean(skipna = True)
+
             benchmark_text_exp = flexi_eval(measurement_benchmark_text[metric_name])
             if type(benchmark_text_exp) == list:
                 insight_text = insight_text.replace(str(benchmark_text_exp),benchmark_text_exp[expressions[0][0]])
                 benchmark_text_exp = benchmark_text_exp[expressions[0][0]]
             row['meanB'] = benchmark_text_exp
+            row['medianB'] = 'none'
             nums = re.findall('([0-9]+[.]*[0-9]*)', benchmark_text_exp)
             if len(nums)==1:
                 row['percentage'] = get_percentage(row['meanA'], float(nums[0]))
@@ -286,6 +419,26 @@ def get_stats(params):
             ln = len(cond_binomial) - lp
             row['pvalue']= binom_test([lp, ln])
             row['score']=1-(row['pvalue'])
+
+
+    elif test == "stat":
+        distA = distA.dropna()
+        if countA > 0:
+            meanA = distA.mean(skipna = True)
+            row['meanA'] = distA.mean(skipna = True)            
+            medianA = distA.median(skipna = True)
+            row['medianA'] = medianA
+            measurement = meanA
+            row['comparison'] = 'is'
+            row['score_type'] = 'stat'
+            row['meanB'] = 0
+            row['medianB'] = 0
+
+            row['percentage'] = meanA/100
+            row['difference'] = meanA
+            row['pvalue']= 0
+            row['score']=1-(row['pvalue'])
+
     elif test == "autobenchmark":
         metric_name = eval_if_str(inter)['measurement']
         distA = distA.dropna()
@@ -296,6 +449,10 @@ def get_stats(params):
             row['score_type'] = 'autobenchmark'
             row['meanA'] = meanA
             row['meanB'] = meanB
+            medianA = distA.median(skipna = True)
+            medianB = distB.median(skipna = True)
+            row['medianA'] = medianA
+            row['medianB'] = medianB
             if row['comparison'] == "greater than":
                 cond_binomial = distA > meanB
             elif row['comparison'] == "lower than":
@@ -311,6 +468,10 @@ def get_stats(params):
     elif test == "count":  
         row['meanA'] = distA.dropna().mean(skipna = True)
         row['meanB'] = distB.dropna().mean(skipna = True)
+        medianA = distA.dropna().median(skipna = True)
+        medianB = distB.dropna().median(skipna = True)
+        row['medianA'] = medianA
+        row['medianB'] = medianB
         row['comparison'] = get_comparison(countA, countB, comparison_dict)
         row['score_type'] = 'count'
         row['percentage'] = get_percentage(countA, countB)
@@ -336,6 +497,10 @@ def get_stats(params):
         splits = row['comparison'].split(' ')
         if len(splits) == 2:
             row['comparison_pre'], row['comparison_post']  = row['comparison'].split(' ')
+        else:
+            row['comparison_post'] = splits[-1]
+            row['comparison_pre'] = ' '.join(splits[:-1])
+            
     row['rough_insight_text'] = insight_text.replace("""{{comparison}}""",row['comparison']).replace("""{{comparison_pre}}""",row['comparison_pre']).replace("""{{comparison_post}}""",row['comparison_post'])
     return row
 
@@ -368,21 +533,21 @@ def exception_print(e,remedy,exit=True):
     if exit:
         sys.exit(0)
 
-def get_data(qA, data, dummy_data, now_details):
-    for k,v in now_details.items():
-        command = "{}={}".format(k,v)
-        exec(command)
+def get_data(qA, variables, now_details, get_total_count=False):
     try:
-        distA = eval(qA)
+        total_count = -1
+        # pdb.set_trace()
+        distA = eval(qA, variables, now_details)
+        if get_total_count:
+            total_count = eval(f"len(data.groupby{qA.split('.groupby')[-1]}.dropna())", variables, now_details)
     except KeyError as e: 
         print(qA)
         remedy = "please check the names of columns in the system_definition and adata file match."
         exception_print(e,remedy, exit=False)
         distA = pd.Series([],dtype=float)
     distA = distA.dropna()
-    distA = distA[distA!=0]
     countA = len(distA)
-    return distA, countA
+    return distA, countA, total_count
 
 
 def score_one_row(params):
@@ -410,14 +575,16 @@ if __name__ == "__main__":
 
 
     input_file_type = data_file_format
-    print(scope_name) if verbose else None
+    print('Insight scope:',scope_name) if verbose else None
     if scope_name:
         print("scoring insights of scope: {}".format(scope_name)) if verbose else None
     else:
         print("scoring insights of general scope") if verbose else None
+    
+
     data = read_data(system_name, input_file_type, scp_name=scope_name)
     dummy_data = create_dummy_data(data.date, date_model, system_name)
-    library = read_library(system_name, input_file_type)
+    library = read_library(system_name, 'pickle')
     system_definition_file = "systems/{}/system_definition_{}.xlsx".format(system_name,system_name)
     categorisation = get_categorisation_if_exist(system_definition_file)    
     data = inject_categorical_columns(data, categorisation)
@@ -457,9 +624,9 @@ if __name__ == "__main__":
                 scored_library = pd.concat([scored_library, pd.DataFrame([row])])
 
     if scope_name:
-        scored_library.to_excel("systems/{}/scored_insights_{}_{}.xlsx".format(system_name,scope_name,system_name))
-        scored_library.to_pickle("systems/{}/scored_insights_{}_{}.pickle".format(system_name,scope_name,system_name), protocol=4)
+        scored_library.to_excel("systems/{}/outputs/scored_insights_{}_{}.xlsx".format(system_name,scope_name,system_name))
+        scored_library.to_pickle("systems/{}/outputs/scored_insights_{}_{}.pickle".format(system_name,scope_name,system_name), protocol=4)
     else:
-        scored_library.to_excel("systems/{}/scored_insights_{}.xlsx".format(system_name,system_name))
-        scored_library.to_pickle("systems/{}/scored_insights_{}.pickle".format(system_name,system_name), protocol=4)
+        scored_library.to_excel("systems/{}/outputs/scored_insights_{}.xlsx".format(system_name,system_name))
+        scored_library.to_pickle("systems/{}/outputs/scored_insights_{}.pickle".format(system_name,system_name), protocol=4)
 # %%
